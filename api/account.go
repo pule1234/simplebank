@@ -4,7 +4,7 @@ import (
 	"errors"
 	"github.com/gin-gonic/gin"
 	db "github.com/pule1234/simple_bank/db/sqlc"
-	"github.com/pule1234/simple_bank/util"
+	"github.com/pule1234/simple_bank/token"
 	"net/http"
 )
 
@@ -20,8 +20,9 @@ func (server *Server) createAccount(ctx *gin.Context) {
 	}
 
 	// todo 从token中获取username （owner） 以下所有函数均需要做处理
+	authPayload := ctx.MustGet(authorizationPayloadKey).(*token.Payload)
 	arg := db.CreateAccountParams{
-		Owner:    util.RandomOwner(),
+		Owner:    authPayload.Username,
 		Currency: req.Currency,
 		Balance:  0,
 	}
@@ -59,6 +60,13 @@ func (server *Server) getAccount(ctx *gin.Context) {
 		return
 	}
 
+	// 当前用户只能获取自己的数据
+	authPayload := ctx.MustGet(authorizationPayloadKey).(*token.Payload)
+	if account.Owner != authPayload.Username {
+		ctx.JSON(http.StatusForbidden, errorResponse(err))
+		return
+	}
+
 	// todo 用户信息认证
 	ctx.JSON(http.StatusOK, account)
 }
@@ -68,7 +76,7 @@ type listAccountRequest struct {
 	PageSize int32 `form:"page_size" binding:"required,min=1,max=100"`
 }
 
-func (server *Server) getListAccount(ctx *gin.Context) {
+func (server *Server) listAccounts(ctx *gin.Context) {
 	var req listAccountRequest
 	if err := ctx.ShouldBindQuery(req); err != nil {
 		ctx.JSON(http.StatusBadRequest, errorResponse(err))
@@ -76,8 +84,9 @@ func (server *Server) getListAccount(ctx *gin.Context) {
 	}
 
 	// todo 用户认证
+	authPayload := ctx.MustGet(authorizationPayloadKey).(*token.Payload)
 	arg := db.ListAccountsParams{
-		//Owner:
+		Owner:  authPayload.Username,
 		Limit:  req.PageSize,
 		Offset: (req.PageID - 1) * req.PageSize,
 	}
