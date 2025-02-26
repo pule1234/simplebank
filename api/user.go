@@ -3,6 +3,7 @@ package api
 import (
 	"errors"
 	"github.com/gin-gonic/gin"
+	"github.com/google/uuid"
 	db "github.com/pule1234/simple_bank/db/sqlc"
 	"github.com/pule1234/simple_bank/util"
 	"net/http"
@@ -71,6 +72,7 @@ type loginUserRequest struct {
 }
 
 type loginUserResponse struct {
+	SessionId             uuid.UUID    `json:session_id`
 	User                  userResponse `json:"user"`
 	AccessToken           string       `json:"accessToken"`
 	AccessTokenExpiresAt  time.Time    `json:"access_token_expires_at"`
@@ -123,7 +125,22 @@ func (server *Server) loginUser(ctx *gin.Context) {
 		ctx.JSON(http.StatusInternalServerError, errorResponse(err))
 		return
 	}
+	// 创建session
+	session, err := server.store.CreateSession(ctx, db.CreateSessionParams{
+		ID:           refreshPayload.ID,
+		Username:     req.Username,
+		RefreshToken: refreshToken,
+		UserAgent:    ctx.Request.UserAgent(),
+		ClientIp:     ctx.ClientIP(),
+		IsBlocked:    false,
+		ExpiresAt:    refreshPayload.ExpiredAt,
+	})
+	if err != nil {
+		ctx.JSON(http.StatusInternalServerError, errorResponse(err))
+		return
+	}
 	rsp := loginUserResponse{
+		SessionId:             session.ID,
 		AccessToken:           accessToken,
 		AccessTokenExpiresAt:  accessPayload.ExpiredAt,
 		RefreshToken:          refreshToken,
