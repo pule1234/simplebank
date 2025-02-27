@@ -2,9 +2,12 @@ package gapi
 
 import (
 	"context"
+	"errors"
 	db "github.com/pule1234/simple_bank/db/sqlc"
 	"github.com/pule1234/simple_bank/pb"
 	"github.com/pule1234/simple_bank/util"
+	"github.com/pule1234/simple_bank/val"
+	"google.golang.org/genproto/googleapis/rpc/errdetails"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/types/known/timestamppb"
@@ -12,9 +15,16 @@ import (
 
 // 完成
 func (server *Server) LoginUser(ctx context.Context, req *pb.LoginUserRequest) (*pb.LoginUserResponse, error) {
+	violations := validateLoginUserRequest(req)
+	if violations != nil {
+		return nil, invalidArgumentError(violations)
+	}
 	user, err := server.store.GetUser(ctx, req.Username)
 	if err != nil {
-		return nil, status.Error(codes.NotFound, "User not found")
+		if errors.Is(err, db.ErrRecordNotFound) {
+			return nil, status.Errorf(codes.NotFound, "user not found")
+		}
+		return nil, status.Errorf(codes.Internal, "failed to find user")
 	}
 
 	//密码校验
@@ -34,13 +44,14 @@ func (server *Server) LoginUser(ctx context.Context, req *pb.LoginUserRequest) (
 		return nil, err
 	}
 
+	mtdt := server.Metadata(ctx)
 	// 存储到session中
 	session, err := server.store.CreateSession(ctx, db.CreateSessionParams{
 		ID:           refreshPayload.ID,
 		Username:     user.Username,
 		RefreshToken: refreshToken,
-		UserAgent:    "",
-		ClientIp:     "",
+		UserAgent:    mtdt.UserAgent,
+		ClientIp:     mtdt.ClientIP,
 		IsBlocked:    false,
 		ExpiresAt:    refreshPayload.ExpiredAt,
 	})
@@ -56,4 +67,15 @@ func (server *Server) LoginUser(ctx context.Context, req *pb.LoginUserRequest) (
 		RefreshTokenExpiresAt: timestamppb.New(accesspayload.ExpiredAt),
 	}
 	return res, nil
+}
+
+func validateLoginUserRequest(req *pb.LoginUserRequest) (violations []*errdetails.BadRequest_FieldViolation) {
+	if err := val.ValidateUsername(req.GetUsername()); err != nil {
+		violations = append(violations, fieldViolation("username", err))
+	}
+
+	if err := val.ValidatePassword(req.GetPassword()); err != nil {
+		violations = append(violations, fieldViolation("password", err))
+	}
+	return violations
 }
